@@ -29,6 +29,7 @@ def evaluate_fedavg(num_clients=5, global_rounds=10, tasks_per_client=240):
     accuracy_log = []
     energy_log = []
     latency_log = []
+    total_comm = 0
     start_time = time.time()
 
     for rnd in range(global_rounds):
@@ -60,6 +61,10 @@ def evaluate_fedavg(num_clients=5, global_rounds=10, tasks_per_client=240):
         # Aggregation step (FedAvg)
         global_weights = fed_avg(local_weights_list)
 
+        # Communication overhead: each client sends & receives once per round
+        comm_round = num_clients * 2  # 1 upload + 1 download per client
+        total_comm += comm_round
+
         # Performance logging
         accuracy = accept_total / task_total
         avg_energy = energy_total / num_clients
@@ -76,7 +81,9 @@ def evaluate_fedavg(num_clients=5, global_rounds=10, tasks_per_client=240):
         "avg_energy": np.mean(energy_log),
         "avg_latency_ms": np.mean(latency_log),
         "convergence_rounds": global_rounds,
-        "total_time_sec": duration
+        "total_time_sec": duration,
+        "total_communication_overhead": total_comm,
+        "avg_communication_per_round": total_comm / global_rounds
     }
 
 # Run the evaluation

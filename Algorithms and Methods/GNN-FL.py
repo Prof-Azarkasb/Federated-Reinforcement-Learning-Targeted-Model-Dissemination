@@ -14,6 +14,7 @@ def create_topology(num_nodes):
 # Message aggregation based on neighbors in GNN-style update
 def aggregate_messages(graph, node_features):
     aggregated = {}
+    comm_count = 0  # count of communication messages
     for node in graph.nodes:
         neighbors = list(graph.neighbors(node))
         if not neighbors:
@@ -21,7 +22,8 @@ def aggregate_messages(graph, node_features):
         else:
             neighbor_features = np.mean([node_features[n] for n in neighbors], axis=0)
             aggregated[node] = (node_features[node] + neighbor_features) / 2
-    return aggregated
+            comm_count += len(neighbors)  # communication per neighbor
+    return aggregated, comm_count
 
 # Local training with GNN-like update
 def local_gnn_training(tasks, weights, learning_rate=0.1):
@@ -41,6 +43,7 @@ def evaluate_gnn_fl(num_nodes=5, global_rounds=10, tasks_per_node=240):
     graph = create_topology(num_nodes)
     node_weights = {i: np.random.rand(dim) for i in range(num_nodes)}
     accuracy_log, energy_log, latency_log = [], [], []
+    total_comm_overhead = 0
     start_time = time.time()
 
     for rnd in range(global_rounds):
@@ -66,8 +69,9 @@ def evaluate_gnn_fl(num_nodes=5, global_rounds=10, tasks_per_node=240):
 
             latency_total += (time.time() - start_node_time) * 1000 / tasks_per_node
 
-        # Message passing
-        node_weights = aggregate_messages(graph, node_features)
+        # Message passing with communication overhead count
+        node_weights, comm_count = aggregate_messages(graph, node_features)
+        total_comm_overhead += comm_count
 
         acc = accept_total / task_total
         accuracy_log.append(acc)
@@ -81,7 +85,9 @@ def evaluate_gnn_fl(num_nodes=5, global_rounds=10, tasks_per_node=240):
         "avg_energy": np.mean(energy_log),
         "avg_latency_ms": np.mean(latency_log),
         "convergence_rounds": global_rounds,
-        "total_time_sec": duration
+        "total_time_sec": duration,
+        "total_communication_overhead": total_comm_overhead,
+        "avg_communication_per_round": total_comm_overhead / global_rounds
     }
 
 # Run evaluation

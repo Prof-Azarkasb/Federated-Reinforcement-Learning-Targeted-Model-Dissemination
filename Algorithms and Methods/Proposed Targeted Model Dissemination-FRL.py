@@ -77,7 +77,7 @@ def update_local_policy(tasks, weights, lr=0.1):
     return weights - lr * (grad / len(tasks))
 
 # -------------------------------
-# Federated Learning Pipeline
+# Federated Learning Pipeline with Communication Tracking
 # -------------------------------
 def run_proposed_method_with_ergm(num_agents=5, global_rounds=10, tasks_per_agent=240, dim=3, clusters=3):
     raw_traces = np.random.uniform(0.3, 0.9, size=(211, dim))
@@ -87,9 +87,10 @@ def run_proposed_method_with_ergm(num_agents=5, global_rounds=10, tasks_per_agen
     
     graph = create_dynamic_graph(num_agents)
     influence_scores = compute_influence_scores(graph)
-
     agent_weights = {i: init_vectors[i % clusters].copy() for i in range(num_agents)}
+
     acc_log, energy_log, latency_log = [], [], []
+    communication_log = []
     start_time = time.time()
 
     for _ in range(global_rounds):
@@ -111,6 +112,8 @@ def run_proposed_method_with_ergm(num_agents=5, global_rounds=10, tasks_per_agen
         w_sum = sum(influence_scores[n] for n in top_nodes)
         avg_weights = sum(influence_scores[n] * updates[n] for n in top_nodes) / w_sum
 
+        communication_log.append(len(top_nodes))
+
         for agent in range(num_agents):
             agent_weights[agent] = avg_weights.copy()
 
@@ -119,17 +122,21 @@ def run_proposed_method_with_ergm(num_agents=5, global_rounds=10, tasks_per_agen
         latency_log.append(latency / num_agents)
 
     duration = time.time() - start_time
+    total_comms = sum(communication_log)
     return {
         "avg_accuracy": np.mean(acc_log),
         "avg_energy": np.mean(energy_log),
         "avg_latency_ms": np.mean(latency_log),
         "convergence_rounds": global_rounds,
-        "total_simulation_time_sec": duration
+        "total_simulation_time_sec": duration,
+        "total_communications": total_comms
     }
 
+# -------------------------------
 # Run the Simulation
+# -------------------------------
 if __name__ == "__main__":
     results = run_proposed_method_with_ergm()
-    print("\n📊 Final Evaluation of Proposed Method:")
+    print("\nFinal Evaluation of Proposed Method with Metrics:")
     for k, v in results.items():
-        print(f"{k}: {v:.4f}")
+        print(f"{k}: {v:.4f}" if isinstance(v, float) else f"{k}: {v}")

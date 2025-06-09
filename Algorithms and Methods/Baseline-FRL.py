@@ -1,119 +1,132 @@
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from tensorflow.keras.optimizers import Adam
 import random
+import time
 
-# Define the global parameters
-MAX_ITERATIONS = 100  # Maximum number of federated learning iterations
-TARGET_ACCURACY = 0.95  # Desired accuracy threshold for the global model
+# -------------------------------
+# Lightweight Linear Model
+# -------------------------------
+class LightweightLinearModel:
+    def __init__(self, input_dim=10):
+        self.weights = np.random.rand(input_dim)
 
-# 1. Initialize the SJF model (simplified for RL)
-def SJF_model():
-    model = Sequential([
-        Dense(64, input_dim=10, activation='relu'),  # Example input_dim is 10, can be changed as per task complexity
-        Dense(32, activation='relu'),
-        Dense(1, activation='linear')  # Output layer for regression-based RL
-    ])
-    model.compile(optimizer=Adam(), loss='mse', metrics=['accuracy'])
-    return model
+    def predict(self, x):
+        return np.dot(self.weights, x)
 
-# 2. Define the fog node class
+    def update(self, x, reward, lr=0.05):
+        prediction = self.predict(x)
+        error = prediction - reward
+        self.weights -= lr * error * x
+
+# -------------------------------
+# Fog Node
+# -------------------------------
 class FogNode:
-    def __init__(self, id):
-        self.id = id
-        self.model = SJF_model()  # Each fog node has its own model
-        self.local_data = None  # Placeholder for node-specific training data
-        self.state_space = 10  # Example state space, could be environment-dependent
-        self.action_space = 5  # Example action space, to be defined per specific task
+    def __init__(self, node_id, input_dim=10):
+        self.id = node_id
+        self.model = LightweightLinearModel(input_dim=input_dim)
+        self.input_dim = input_dim
 
-    # Method for training the model
-    def train_local_model(self, max_steps=100):
-        # Simulate training process (simplified)
-        for step in range(max_steps):
-            # Randomly simulate states and actions
-            current_state = np.random.rand(self.state_space)
-            action = np.random.choice(self.action_space)
-            reward = np.random.rand()  # Simulated reward for the action taken
-            next_state = np.random.rand(self.state_space)
-            
-            # Training the model with reinforcement learning update
-            self.model.fit(current_state.reshape(1, -1), np.array([reward]), epochs=1, verbose=0)
-            if step % 10 == 0:
-                print(f"FogNode {self.id} training step {step} completed.")
-    
-    # Send local model to the central server
-    def send_local_model(self):
-        return self.model.get_weights()  # Sending the model weights
+    def train(self, episodes=100):
+        for _ in range(episodes):
+            state = np.random.rand(self.input_dim)
+            reward = self.simulate_reward(state)
+            self.model.update(state, reward)
 
-    # Receive global model from the central server
-    def receive_global_model(self, global_weights):
-        self.model.set_weights(global_weights)  # Update with the global model
+    def simulate_reward(self, state):
+        return 1 if state[2] < 0.7 and state[1] > 0.3 else 0
 
-# 3. Central server to aggregate models from fog nodes
+    def send_weights(self):
+        return self.model.weights.copy()
+
+    def receive_weights(self, weights):
+        self.model.weights = weights.copy()
+
+# -------------------------------
+# Central Server
+# -------------------------------
 class CentralServer:
-    def __init__(self):
-        self.global_model = SJF_model()  # Initialize the global model
-        self.fog_nodes = []
-    
-    def add_fog_node(self, fog_node):
-        self.fog_nodes.append(fog_node)
-    
-    def aggregate_models(self):
-        # Aggregate the models' weights by averaging
-        all_weights = [fog_node.send_local_model() for fog_node in self.fog_nodes]
+    def __init__(self, input_dim=10):
+        self.global_model = LightweightLinearModel(input_dim=input_dim)
+        self.nodes = []
+
+    def add_node(self, node):
+        self.nodes.append(node)
+
+    def aggregate(self):
+        all_weights = [node.send_weights() for node in self.nodes]
         avg_weights = np.mean(all_weights, axis=0)
-        self.global_model.set_weights(avg_weights)  # Update global model with averaged weights
+        self.global_model.weights = avg_weights
+        return len(all_weights)  # communication cost: number of uploads
 
-    def distribute_global_model(self):
-        # Distribute the global model weights back to the fog nodes
-        for fog_node in self.fog_nodes:
-            fog_node.receive_global_model(self.global_model.get_weights())
+    def distribute(self):
+        for node in self.nodes:
+            node.receive_weights(self.global_model.weights)
+        return len(self.nodes)  # communication cost: number of downloads
 
-# 4. Federated Learning Loop
-def federated_learning_loop(central_server, max_iterations, target_accuracy):
-    iteration = 0
-    global_accuracy = 0
-    
-    while iteration < max_iterations and global_accuracy < target_accuracy:
-        print(f"Iteration {iteration + 1}/{max_iterations}")
-        
-        # Step 1: Local Training at each fog node
-        for fog_node in central_server.fog_nodes:
-            fog_node.train_local_model()  # Each fog node trains its model
-        
-        # Step 2: Aggregate local models at the central server
-        central_server.aggregate_models()
-        
-        # Step 3: Distribute the new global model back to fog nodes
-        central_server.distribute_global_model()
-        
-        # Step 4: Evaluate the global model accuracy (simplified for demonstration)
-        global_accuracy = np.random.rand()  # Simulate evaluation of the global model
-        print(f"Global model accuracy: {global_accuracy:.4f}")
-        
-        # Increment iteration
-        iteration += 1
-    
-    if global_accuracy >= target_accuracy:
-        print("Target accuracy reached, stopping training.")
-    else:
-        print("Max iterations reached without reaching target accuracy.")
+# -------------------------------
+# Federated Learning Loop with Communication Overhead Tracking
+# -------------------------------
+def federated_learning_loop(server, max_rounds=100, target_accuracy=0.95, tasks_per_node=240):
+    accuracy_log, energy_log, latency_log = [], [], []
+    comm_overhead = 0
+    start_time = time.time()
 
-# 5. Initialize and Run the Federated Learning System
-def main():
-    # Initialize the central server
-    central_server = CentralServer()
-    
-    # Create and add fog nodes to the server
-    num_fog_nodes = 3  # You can adjust the number of fog nodes as needed
-    for i in range(num_fog_nodes):
-        fog_node = FogNode(id=i)
-        central_server.add_fog_node(fog_node)
-    
-    # Start the federated learning process
-    federated_learning_loop(central_server, max_iterations=MAX_ITERATIONS, target_accuracy=TARGET_ACCURACY)
+    for rnd in range(max_rounds):
+        print(f"\nRound {rnd + 1}/{max_rounds}")
+        start_round = time.time()
+        total_accepts, total_tasks, energy_used = 0, 0, 0
+
+        for node in server.nodes:
+            node.train(episodes=tasks_per_node)
+
+        comm_overhead += server.aggregate()
+        comm_overhead += server.distribute()
+
+        for node in server.nodes:
+            for _ in range(tasks_per_node):
+                task = np.random.rand(node.input_dim)
+                prediction = node.model.predict(task)
+                accept = prediction >= 0.5
+                total_tasks += 1
+                total_accepts += int(accept)
+                energy_used += 3 if accept else 1
+
+        accuracy = total_accepts / total_tasks
+        latency = (time.time() - start_round) * 1000 / total_tasks
+
+        accuracy_log.append(accuracy)
+        energy_log.append(energy_used / len(server.nodes))
+        latency_log.append(latency)
+
+        print(f"Accuracy: {accuracy:.4f} | ⚡ Energy: {energy_used} | 🕒 Latency: {latency:.2f} ms/task")
+
+        if accuracy >= target_accuracy:
+            print("Target accuracy reached.")
+            break
+
+    total_time = time.time() - start_time
+    return {
+        "avg_accuracy": np.mean(accuracy_log),
+        "avg_energy": np.mean(energy_log),
+        "avg_latency_ms": np.mean(latency_log),
+        "convergence_rounds": rnd + 1,
+        "total_simulation_time_sec": total_time,
+        "total_communication_overhead": comm_overhead,
+        "avg_communication_per_round": comm_overhead / (rnd + 1)
+    }
+
+# -------------------------------
+# Main Function
+# -------------------------------
+def run_baseline_frl():
+    server = CentralServer(input_dim=10)
+    for i in range(5):  # 5 fog nodes
+        server.add_node(FogNode(node_id=i, input_dim=10))
+
+    results = federated_learning_loop(server)
+    print("\nFinal Baseline-FRL Results:")
+    for k, v in results.items():
+        print(f"{k}: {v:.4f}")
 
 if __name__ == "__main__":
-    main()
+    run_baseline_frl()
